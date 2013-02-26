@@ -1,5 +1,33 @@
 package org.infinispan.distexec.fj;
 
+import static org.infinispan.util.Util.rewrapAsCacheException;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.Serializable;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.configuration.cache.CacheMode;
@@ -7,24 +35,17 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.distexec.DistributedTask;
 import org.infinispan.distexec.DistributedTaskBuilder;
 import org.infinispan.manager.DefaultCacheManager;
+import org.infinispan.util.concurrent.ConcurrentMapFactory;
 import org.infinispan.util.concurrent.NotifyingFuture;
-import org.infinispan.util.concurrent.jdk8backported.ConcurrentHashMapV8;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
-import org.jgroups.*;
+import org.jgroups.Address;
+import org.jgroups.Channel;
+import org.jgroups.JChannel;
+import org.jgroups.Message;
+import org.jgroups.ReceiverAdapter;
+import org.jgroups.View;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
-
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.Serializable;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
-
-import static org.infinispan.util.Util.rewrapAsCacheException;
 
 /**
  * Adds a distributed processing wrapper around a normal ForkJoinPool.
@@ -134,8 +155,8 @@ public class DefaultDistributedForkJoinPool extends AbstractDistributedForkJoinP
 	// This is a map of tasks that we own, that other tasks are working on
 	// (tasks that have been "stolen" by other nodes)
 	// it is a map of node address -> set of taskIds
-	ConcurrentMap<Address, Set<String>> nodeToTaskMap = new ConcurrentHashMapV8<Address, Set<String>>();
-	ConcurrentMap<String, DistributedFJTask<?>> taskIdToTaskMap = new ConcurrentHashMapV8<String, DistributedFJTask<?>>();
+   ConcurrentMap<Address, Set<String>> nodeToTaskMap = ConcurrentMapFactory.makeConcurrentMap();
+   ConcurrentMap<String, DistributedFJTask<?>> taskIdToTaskMap = ConcurrentMapFactory.makeConcurrentMap();
 
 	/**
 	 * The cache we're using to target tasks; usually, this is the task that holds the data we're processing.
@@ -226,19 +247,6 @@ public class DefaultDistributedForkJoinPool extends AbstractDistributedForkJoinP
 		this(cache, configurationFileName, groupName, Runtime.getRuntime().availableProcessors());
 	}
 
-	/*
-	 * cache-based alg:
-	 *
-	 *   - create a task cache.
-	 *   - have every other DistPool listening for tasks?
-	 *      - and for node add/drop events?
-	 *      - tasks added to the TaskCache have an Owner Address field
-	 *      - when they see a new task in their partition, they send that owner a message: "Hey, pick me!" -- possibly with some node info, too. Like load, memory avail., etc.
-	 *      - owners pick the first (or best, or whatever...pluggable "best" alg) and say, "Ok, here you go."
-	 *      - that transfer happens...how?  Through the Transfer?  Through an update to the cache itself? (update the task w/ a new Owner? ...or new entry in the list of owners)
-	 *      the owner...sees that?  Via a listener? And then starts working it?
-	 *      is that abusing listeners?
-	 */
 
 
 	public DefaultDistributedForkJoinPool(Cache cache, String configurationFileName, String groupName, int parallelism) {
