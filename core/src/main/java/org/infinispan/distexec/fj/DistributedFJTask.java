@@ -1,9 +1,13 @@
 package org.infinispan.distexec.fj;
 
+import java.io.IOException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.RunnableFuture;
 
+import org.infinispan.util.concurrent.FutureListener;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinWorkerThread;
@@ -79,25 +83,9 @@ import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
 public abstract class DistributedFJTask<V> extends RecursiveTask<V> {
    private static final long serialVersionUID = -767990589706874393L;
 
-   //    final private static Timer serializationTimer = Metrics.defaultRegistry().newTimer(DistributedFJTask.class, "serialization", TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS);
-   //    final private static Timer deserializationTimer = Metrics.defaultRegistry().newTimer(DistributedFJTask.class, "deserialization", TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS);
-   //    final private static Timer hydrationTimer = Metrics.defaultRegistry().newTimer(DistributedFJTask.class, "hydration", TimeUnit.MILLISECONDS, TimeUnit.MILLISECONDS);
    protected String id = UUID.randomUUID().toString();
 
-   // you still need to implement the "compute" method.
-
-   //    /**
-   //     * The default implementation here is quite na√Øve. You are highly encouraged to implement a more efficient method here.
-   //     *
-   //     * TODO: This can't really work, though. We need an accompanying deserializer that we can look up or reference on the receiving end, and of course that would need to be in a helper class (since this class is still serialized then)
-   //     *
-   //     * @return
-   //     */
-   //    public byte[] serialize() {
-   //        // naive implementation
-   //        return SerializationUtils.serialize(this);
-   //        // TODO: attempt to use Kryo and fall back on Java serialization if necessary.
-   //    }
+   transient Set<FutureListener<V>> listeners = new CopyOnWriteArraySet<FutureListener<V>>();;
 
    //TODO: put in a TaskSerializerFactory and a ValueSerializerFactory?  Default implementations use Java serialization?
    // But the factory itself would need to be accessible on the other side...
@@ -125,21 +113,62 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> {
    }
 
    /**
-    * delegate to super.exec(), but notify our listeners first.
+    * The main computation performed by this task.
     */
-   @Override
-   protected boolean exec() {
+   protected abstract V doCompute();
+
+   /**
+    * The main computation performed by this task.
+    */
+   protected final V compute() {
       try {
-         boolean result = super.exec();
-         //TODO: call 'on success' callbacks.
-         return result;
-      } catch (RuntimeException t) {
-         // TODO: call 'on failure' callbacks
-         throw t;
-      } catch (Error e) {
-         // TODO: call 'on failure' callbacks
-         throw e;
+         return doCompute();
+      } finally {
+         invokeListeners();
       }
+   }
+
+   //   /**
+   //    * delegate to super.exec(), but notify our listeners first.
+   //    */
+   //   @Override
+   //   protected boolean exec() {
+   //      try {
+   //         boolean result = super.exec();
+   //         //TODO: call 'on success' callbacks.
+   //         return result;
+   //      } catch (RuntimeException t) {
+   //         // TODO: call 'on failure' callbacks
+   //         throw t;
+   //      } catch (Error e) {
+   //         // TODO: call 'on failure' callbacks
+   //         throw e;
+   //      }
+   //   }
+
+   private void invokeListeners() {
+      for (FutureListener<V> listener : listeners) {
+         invokeListener(listener);
+      }
+   }
+
+   /**
+    * Attaches a listener. This isn't a Future, but we take in a FutureListener here like
+    * NotifyingFuture for convenience.
+    * 
+    * @param listener
+    *           listener to attach
+    * @return the same future instance
+    */
+   public void attachListener(FutureListener<V> listener) {
+      listeners.add(listener);
+      if (isDone()) {
+         invokeListener(listener);
+      }
+   }
+
+   private void invokeListener(FutureListener<V> listener) {
+      listener.futureDone(this);
    }
 
    @Override
@@ -176,6 +205,11 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> {
       return sb.toString();
    }
 
+   private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
+      in.defaultReadObject();
+      listeners = new CopyOnWriteArraySet<FutureListener<V>>();
+   }
+
    /**
     * Returns a new {@code ForkJoinTask} that performs the {@code call} method of the given
     * {@code Callable} as its action, and returns its result upon {@link #join}, translating any
@@ -203,7 +237,7 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> {
          this.callable = callable;
       }
 
-      public final T compute() {
+      public final T doCompute() {
          try {
             return callable.call();
          } catch (Error err) {
