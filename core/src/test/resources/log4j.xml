@@ -28,88 +28,92 @@
  -->
 <log4j:configuration xmlns:log4j="http://jakarta.apache.org/log4j/" debug="false">
 
-   <!-- A time/date based rolling appender -->
-   <appender name="FILE" class="org.apache.log4j.FileAppender">
-      <param name="File" value="infinispan.log"/>
-   <!--<appender name="FILE" class="org.infinispan.util.logging.log4j.CompressedFileAppender">-->
-      <!--<param name="File" value="infinispan.log.gz"/>-->
-      <param name="Append" value="false"/>
+    <!-- A time/date based rolling appender -->
+    <appender name="FILE" class="org.apache.log4j.FileAppender">
+        <param name="File" value="infinispan.log"/>
+        <!--<appender name="FILE" class="org.infinispan.util.logging.log4j.CompressedFileAppender">-->
+        <!--<param name="File" value="infinispan.log.gz"/>-->
+        <param name="Append" value="false"/>
 
-      <param name="Threshold" value="TRACE"/>
+        <param name="Threshold" value="TRACE"/>
 
-      <layout class="org.apache.log4j.PatternLayout">
-         <!-- The default pattern: Date Priority (Thread) [Category] Message\n -->
-         <param name="ConversionPattern" value="%d %-5p (%t) [%c] %m%n"/>
+        <layout class="org.apache.log4j.PatternLayout">
+            <!-- The default pattern: Date Priority (Thread) [Category] Message\n -->
+            <param name="ConversionPattern" value="%d %-5p (%t) [%c] %m%n"/>
 
-         <!-- The full pattern: Date MS Priority [Category] (Thread:NDC) Message\n
-        <param name="ConversionPattern" value="%d %-5r %-5p [%c] (%t:%x) %m%n"/>
-         -->
-      </layout>
-   </appender>
+            <!-- The full pattern: Date MS Priority [Category] (Thread:NDC) Message\n
+           <param name="ConversionPattern" value="%d %-5r %-5p [%c] (%t:%x) %m%n"/>
+            -->
+        </layout>
+    </appender>
 
-   <appender name="CONSOLE" class="org.apache.log4j.ConsoleAppender">
-      <param name="Threshold" value="WARN"/>
-      <param name="Target" value="System.out"/>
+    <appender name="CONSOLE" class="org.apache.log4j.ConsoleAppender">
+        <param name="Threshold" value="WARN"/>
+        <param name="Target" value="System.out"/>
 
-      <layout class="org.apache.log4j.PatternLayout">
-         <!-- The default pattern: Date Priority [Category] Message\n -->
-         <param name="ConversionPattern" value="%d %-5p [%c{1}] (%t) %m%n"/>
-      </layout>
-   </appender>
+        <layout class="org.apache.log4j.PatternLayout">
+            <!-- The default pattern: Date Priority [Category] Message\n -->
+            <param name="ConversionPattern" value="%d %-5p [%c{1}] (%t) %m%n"/>
+        </layout>
+    </appender>
 
 
-   <!-- ================ -->
-   <!-- Limit categories -->
-   <!-- ================ -->
+    <!-- ================ -->
+    <!-- Limit categories -->
+    <!-- ================ -->
 
-   <category name="org.infinispan">
-      <priority value="DEBUG"/>
-   </category>
+    <category name="org.infinispan">
+        <priority value="DEBUG"/>
+    </category>
 
-   <category name="org.infinispan.distribution">
-      <priority value="DEBUG"/>
-   </category>
+    <category name="org.infinispan.distribution">
+        <priority value="DEBUG"/>
+    </category>
 
-   <category name="org.infinispan.marshall">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.marshall">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.infinispan.profiling">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.profiling">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.infinispan.jmx">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.jmx">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.infinispan.factories">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.factories">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.infinispan.client.hotrod">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.client.hotrod">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.infinispan.lucene">
-      <priority value="WARN"/>
-   </category>
+    <category name="org.infinispan.lucene">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="com.mchange">
-      <priority value="WARN"/>
-   </category>
+    <category name="com.mchange">
+        <priority value="WARN"/>
+    </category>
 
-   <category name="org.jgroups">
-      <priority value="DEBUG"/>
-   </category>
+    <category name="org.jgroups">
+        <priority value="DEBUG"/>
+    </category>
 
-   <!-- ======================= -->
-   <!-- Setup the Root category -->
-   <!-- ======================= -->
+    <category name="org.jgroups.protocols.FD">
+        <priority value="INFO"/>
+    </category>
 
-   <root>
-      <priority value="INFO"/>
-      <!--<appender-ref ref="CONSOLE"/>-->
-      <appender-ref ref="FILE"/>
-   </root>
+    <!-- ======================= -->
+    <!-- Setup the Root category -->
+    <!-- ======================= -->
+
+    <root>
+        <priority value="INFO"/>
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
 
 </log4j:configuration>

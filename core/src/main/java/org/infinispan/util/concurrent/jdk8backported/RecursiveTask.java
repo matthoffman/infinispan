@@ -60,7 +60,7 @@ public abstract class RecursiveTask<V> extends ForkJoinTask<V> {
     /**
      * Implements execution conventions for RecursiveTask.
      */
-   protected boolean exec() {
+    protected final boolean exec() {
         result = compute();
         return true;
     }

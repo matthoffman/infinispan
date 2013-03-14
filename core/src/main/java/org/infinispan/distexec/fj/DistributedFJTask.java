@@ -1,5 +1,12 @@
 package org.infinispan.distexec.fj;
 
+import org.infinispan.util.concurrent.FutureListener;
+import org.infinispan.util.concurrent.NotifyingFuture;
+import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
+import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
+import org.infinispan.util.concurrent.jdk8backported.ForkJoinWorkerThread;
+import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
+
 import java.io.IOException;
 import java.util.Set;
 import java.util.UUID;
@@ -7,22 +14,16 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.RunnableFuture;
 
-import org.infinispan.util.concurrent.FutureListener;
-import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
-import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
-import org.infinispan.util.concurrent.jdk8backported.ForkJoinWorkerThread;
-import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
-
 /**
  * TODO: change this to an interface, and let the main implementor extend RecursiveTask? Then we'd
  * need to have a wrapper, though, right? Class indicating that this particular RecursiveTask can be
  * distributed.
- * 
+ *
  * In essence, saying a task can be distributed is effectively saying
  * "this task is coarse-grained enough that it's worth sending to another machine." If a task is
  * very small, it is often not worth sending off to another server to process; the communication
  * overhead is too high.
- * 
+ *
  * Obviously, there's cases where that's not true. For example, if we had a ton of very fine-grained
  * tasks, it would still be worth it to distribute some of those tasks; the overhead in distribution
  * may well be less than the amount of time it would take one machine to execute all tasks. And it
@@ -30,15 +31,15 @@ import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
  * can estimate our queue length, for example. But instead we are relying on developers to design
  * their tasks such that they are broken down from larger parts into smaller, and furthermore that
  * they mark those larger tasks as "distributable" for us. Further optimization is TBD.
- * 
+ *
  * <h2>Deciding whether to use DistributableTask or LocalTask</h2>
- * 
+ *
  * Sometimes the decision for when to make a task a DistributableTask vs. a LocalTask is fairly
  * clear. Sometimes it isn't. As a general heuristic, consider the amount of time it would take to
  * serialize a task, send it to another server, and deserialize it. Then add to that the time it
  * would take to serialize the result, send that back to the this server, and deserialize it.
- * 
- * 
+ *
+ *
  * There are tradeoffs involved in deciding between DistributableTask and LocalTask. For example:
  * <ul>
  * <li>
@@ -58,200 +59,208 @@ import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
  * large.</li>
  * </ul>
  * add some overhead.
- * 
+ *
  * If you are algorithmically deciding whether a task should be a DistributableTask or a LocalTask,
  * consider making it a DistributableTask just in case.
- * 
+ *
  * If in doubt, you could do something like the following from within your task, but <b>please
  * note</b> that we have not yet verified that this is actually worth it. Want to be the first and
  * run some tests?
- * 
+ *
  * <code>
-            if (ForkJoinTask.inForkJoinPool()) {
-                 if (ForkJoinTask.getSurplusQueuedTaskCount() > 3) {
-                     // create a DistributableTask
-                 } else {
-                     // create a LocalTask
-                 }
-             } else {
-                 // we're not within a currently executing ForkJoinTask, so we can't check surplus queued task count.
-                 // create a DistributableTask, just in case.
-             }
-   </code>
- * 
+ if (ForkJoinTask.inForkJoinPool()) {
+ if (ForkJoinTask.getSurplusQueuedTaskCount() > 3) {
+ // create a DistributableTask
+ } else {
+ // create a LocalTask
+ }
+ } else {
+ // we're not within a currently executing ForkJoinTask, so we can't check surplus queued task count.
+ // create a DistributableTask, just in case.
+ }
+ </code>
+ *
  */
-public abstract class DistributedFJTask<V> extends RecursiveTask<V> {
-   private static final long serialVersionUID = -767990589706874393L;
+public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements NotifyingFuture<V> {
+    private static final long serialVersionUID = -767990589706874393L;
 
-   protected String id = UUID.randomUUID().toString();
+    protected String id = UUID.randomUUID().toString();
 
-   transient Set<FutureListener<V>> listeners = new CopyOnWriteArraySet<FutureListener<V>>();;
+    transient Set<FutureListener<V>> listeners = new CopyOnWriteArraySet<FutureListener<V>>();
 
-   //TODO: put in a TaskSerializerFactory and a ValueSerializerFactory?  Default implementations use Java serialization?
-   // But the factory itself would need to be accessible on the other side...
-   // perhaps the bytes we send always includes a deserialization class name? Has to be able to be instantiated with a no-arg constructor,
-   // maybe has to be threadsafe, and has to be accessible to the caller?
-   // Or, just extend the Externalizable interface, and make the default implementation use Java serialization? Or make the default use Kryo,
-   // and make people explicitly use Serializable if Kryo doesn't work for them?
-   // Alternately, we can send an s-expression. Not sure if that would be better.
+    public String getId() {
+        return id;
+    }
 
-   public String getId() {
-      return id;
-   }
+    @Override
+    public ForkJoinTask<V> fork() {
+        ForkJoinPool pool = ((ForkJoinWorkerThread) Thread.currentThread()).getPool();
+        // make sure we're working in a DistributedForkJoinPool. If not, fork normally.
+        if (pool instanceof AbstractDistributedForkJoinPool) {
+            // need to go through the proper channels so distributable things go into their special deque.
+            ((AbstractDistributedForkJoinPool) pool).submitDistributable(this);
+        } else {
+            super.fork();
+        }
+        return this;
+    }
 
-   @Override
-   public ForkJoinTask<V> fork() {
-      ForkJoinPool pool = ((ForkJoinWorkerThread) Thread.currentThread()).getPool();
-      // make sure we're working in a DistributedForkJoinPool. If not, fork normally.
-      if (pool instanceof AbstractDistributedForkJoinPool) {
-         // need to go through the proper channels so distributable things go into their special deque.
-         ((AbstractDistributedForkJoinPool) pool).submitDistributable(this);
-      } else {
-         super.fork();
-      }
-      return this;
-   }
+    /**
+     * The main computation performed by this task.
+     */
+    protected abstract V doCompute();
 
-   /**
-    * The main computation performed by this task.
-    */
-   protected abstract V doCompute();
+    /**
+     * The main computation performed by this task.
+     */
+    protected final V compute() {
+        try {
+            return doCompute();
+        } finally {
+            invokeListeners();
+        }
+    }
 
-   /**
-    * The main computation performed by this task.
-    */
-   protected final V compute() {
-      try {
-         return doCompute();
-      } finally {
-         invokeListeners();
-      }
-   }
+    // This is another option instead of co-opting the compute() method, above. But taking over the
+    // exec method requires changing the RecursiveTask class to make it non-final, or just not
+    // extending RecursiveTask.
+    //   /**
+    //    * delegate to super.exec(), but notify our listeners first.
+    //    */
+    //   @Override
+    //   protected boolean exec() {
+    //      try {
+    //         return super.exec();
+    //      } finally {
+    //         invokeListeners();
+    //      }
+    //   }
 
-   //   /**
-   //    * delegate to super.exec(), but notify our listeners first.
-   //    */
-   //   @Override
-   //   protected boolean exec() {
-   //      try {
-   //         boolean result = super.exec();
-   //         //TODO: call 'on success' callbacks.
-   //         return result;
-   //      } catch (RuntimeException t) {
-   //         // TODO: call 'on failure' callbacks
-   //         throw t;
-   //      } catch (Error e) {
-   //         // TODO: call 'on failure' callbacks
-   //         throw e;
-   //      }
-   //   }
+    private void invokeListeners() {
+        if (listeners != null) {
+            for (FutureListener<V> listener : listeners) {
+                invokeListener(listener);
+            }
+        }
+    }
 
-   private void invokeListeners() {
-      for (FutureListener<V> listener : listeners) {
-         invokeListener(listener);
-      }
-   }
+    /**
+     * Attaches a listener. This isn't a Future, but we take in a FutureListener here like
+     * NotifyingFuture for convenience.
+     *
+     * @param listener
+     *           listener to attach
+     * @return the same future instance
+     */
+    public NotifyingFuture<V> attachListener(FutureListener<V> listener) {
+        if (listeners == null) {
+            createListenerArrayIfNecsesary();
+        }
+        listeners.add(listener);
+        if (isDone()) {
+            invokeListener(listener);
+        }
+        return this;
+    }
 
-   /**
-    * Attaches a listener. This isn't a Future, but we take in a FutureListener here like
-    * NotifyingFuture for convenience.
-    * 
-    * @param listener
-    *           listener to attach
-    * @return the same future instance
-    */
-   public void attachListener(FutureListener<V> listener) {
-      listeners.add(listener);
-      if (isDone()) {
-         invokeListener(listener);
-      }
-   }
+    /*
+     * This is only synchronized because we have a null check on 'listeners'. That should never be
+     * true, so someone braver than me can remove that 'synchronized' if you'd like. We're using the
+     * synchronized keyword instead of a Lock object because we're serializing a lot of these, and
+     * AFAIK locks take up space in the serialized object and the 'serialized' keyword does not. But
+     * if that's not true, someone disabuse me of that notion.
+     */
+    private synchronized void createListenerArrayIfNecsesary() {
+        if (listeners == null) {
+            listeners = new CopyOnWriteArraySet<FutureListener<V>>(); // shouldn't be possible, but makes me feel better to check.
+        }
+    }
 
-   private void invokeListener(FutureListener<V> listener) {
-      listener.futureDone(this);
-   }
+    private void invokeListener(FutureListener<V> listener) {
+        listener.futureDone(this);
+    }
 
-   @Override
-   public boolean equals(Object o) {
-      if (this == o)
-         return true;
-      if (!(o instanceof DistributedFJTask))
-         return false;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o)
+            return true;
+        if (!(o instanceof DistributedFJTask))
+            return false;
 
-      DistributedFJTask<?> that = (DistributedFJTask<?>) o;
+        DistributedFJTask<?> that = (DistributedFJTask<?>) o;
 
-      if (id != null ? !id.equals(that.id) : that.id != null)
-         return false;
+        if (id != null ? !id.equals(that.id) : that.id != null)
+            return false;
 
-      return true;
-   }
+        return true;
+    }
 
-   @Override
-   public int hashCode() {
-      return id != null ? id.hashCode() : 0;
-   }
+    @Override
+    public int hashCode() {
+        return id != null ? id.hashCode() : 0;
+    }
 
-   /**
-    * You're encouraged to override this with something more descriptive.
-    * 
-    * @return
-    */
-   @Override
-   public String toString() {
-      final StringBuilder sb = new StringBuilder();
-      sb.append(getClass().getName());
-      sb.append("{id='").append(id).append('\'');
-      sb.append('}');
-      return sb.toString();
-   }
+    /**
+     * You're encouraged to override this with something more descriptive.
+     *
+     * @return
+     */
+    @Override
+    public String toString() {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(getClass().getName());
+        sb.append("{id='").append(id).append('\'');
+        sb.append('}');
+        return sb.toString();
+    }
 
-   private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
-      in.defaultReadObject();
-      listeners = new CopyOnWriteArraySet<FutureListener<V>>();
-   }
+    private void readObject(java.io.ObjectInputStream in) throws IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        listeners = new CopyOnWriteArraySet<FutureListener<V>>();
+    }
 
-   /**
-    * Returns a new {@code ForkJoinTask} that performs the {@code call} method of the given
-    * {@code Callable} as its action, and returns its result upon {@link #join}, translating any
-    * checked exceptions encountered into {@code RuntimeException}.
-    * 
-    * @param callable
-    *           the callable action
-    * @return the task
-    */
-   public static <T> DistributedFJTask<T> adapt(Callable<? extends T> callable) {
-      return new AdaptedCallable<T>(callable);
-   }
+    /**
+     * Returns a new {@code ForkJoinTask} that performs the {@code call} method of the given
+     * {@code Callable} as its action, and returns its result upon {@link #join}, translating any
+     * checked exceptions encountered into {@code RuntimeException}.
+     *
+     * @param callable
+     *           the callable action
+     * @return the task
+     */
+    public static <T> DistributedFJTask<T> adapt(Callable<? extends T> callable) {
+        return new AdaptedCallable<T>(callable);
+    }
 
-   /**
-    * Adaptor for Callables
-    */
-   static class AdaptedCallable<T> extends DistributedFJTask<T> implements RunnableFuture<T> {
-      private static final long serialVersionUID = 9134233435355241000L;
-      final Callable<? extends T> callable;
-      T result;
+    /**
+     * Adaptor for Callables
+     */
+    static class AdaptedCallable<T> extends DistributedFJTask<T> implements RunnableFuture<T> {
+        private static final long serialVersionUID = 9134233435355241000L;
+        final Callable<? extends T> callable;
+        T result;
 
-      AdaptedCallable(Callable<? extends T> callable) {
-         if (callable == null)
-            throw new NullPointerException();
-         this.callable = callable;
-      }
+        AdaptedCallable(Callable<? extends T> callable) {
+            if (callable == null)
+                throw new NullPointerException();
+            this.callable = callable;
+        }
 
-      public final T doCompute() {
-         try {
-            return callable.call();
-         } catch (Error err) {
-            throw err;
-         } catch (RuntimeException rex) {
-            throw rex;
-         } catch (Exception ex) {
-            throw new RuntimeException(ex);
-         }
-      }
+        public final T doCompute() {
+            try {
+                return callable.call();
+            } catch (Error err) {
+                throw err;
+            } catch (RuntimeException rex) {
+                throw rex;
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        }
 
-      public final void run() {
-         invoke();
-      }
+        public final void run() {
+            invoke();
+        }
 
-   }
+    }
 }
