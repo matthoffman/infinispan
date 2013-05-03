@@ -154,7 +154,7 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
      */
     public NotifyingFuture<V> attachListener(FutureListener<V> listener) {
         if (listeners == null) {
-            createListenerArrayIfNecsesary();
+            createListenerArrayIfNecessary();
         }
         listeners.add(listener);
         if (isDone()) {
@@ -170,7 +170,7 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
      * AFAIK locks take up space in the serialized object and the 'serialized' keyword does not. But
      * if that's not true, someone disabuse me of that notion.
      */
-    private synchronized void createListenerArrayIfNecsesary() {
+    private synchronized void createListenerArrayIfNecessary() {
         if (listeners == null) {
             listeners = new CopyOnWriteArraySet<FutureListener<V>>(); // shouldn't be possible, but makes me feel better to check.
         }

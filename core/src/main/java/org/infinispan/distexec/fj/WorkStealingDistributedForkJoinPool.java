@@ -428,7 +428,7 @@ public class WorkStealingDistributedForkJoinPool extends AbstractDistributedFork
     }
 
 	/*
-	 * public DistributedFJTask getWork(NodeId nodeId) {
+     * public DistributedFJTask getWork(NodeId nodeId) {
 	 *
 	 * }
 	 */
@@ -652,10 +652,10 @@ public class WorkStealingDistributedForkJoinPool extends AbstractDistributedFork
     Lock dequeWriteLock = new ReentrantLock();
 
     @Override
-    protected <T> void addWork(ForkJoinTask<T> task) {
+    protected <T> void addWork(DistributedFJTask<T> task) {
         dequeWriteLock.lock();
         try {
-            deque.push((DistributedFJTask<?>) task);
+            deque.push(task);
         } finally {
             dequeWriteLock.unlock();
         }

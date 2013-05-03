@@ -60,7 +60,7 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
     }
 
 
-    protected <T> ForkJoinTask<T> submitDistributable(ForkJoinTask<T> task) {
+    protected <T> ForkJoinTask<T> submitDistributable(DistributedFJTask<T> task) {
         //            if (ForkJoinTask.inForkJoinPool() && isQueueBackedUp(ForkJoinTask.getSurplusQueuedTaskCount())) {
         // mark that there is work available to be distributed?
         // do I want to do something here? Proactively try to find someone else to take this task?
@@ -72,18 +72,11 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
         // It's dealing with the finer-grained tasks, and is more sensitive to small latencies.
         // The "hasQueuedSubmissions" method has fairly low impact on the ForkJoinPool.
 
-        // looking at the code, getQueuedSubmissionCount looks fairly inexpensive. More expensive, certainly,
-        // if there are a lot of queues, because getQueuedSubmissionCount has to go through every queue, while
-        // hasQueuedSubmissions just returns on the first one. But still...that might be worth it if we find our queue idling.
-        if (!this.hasQueuedSubmissions()) {
-            // TODO: do we need to check if this task's keys() line up with what
-            // we have locally? (canExecuteLocally() returns true?)
-            // if our queue is empty, but this task requires data that isn't on
-            // this machine, we probably ought to distribute it to someone that
-            // has the data anyway, right?
-
-            // our queue is empty. Go ahead and send it on to the internal FJ
-            // pool.
+        // if this task *can* be executed locally, and our local pool needs work now, don't bother to distribute this
+        // task. Just execute it locally.
+        // This is on the assumption that executing locally is generally more efficient than distributing it elsewhere.
+        if (preferLocalExecution(task) && poolNeedsWorkPolicy.needsWork(this)) {
+            // our queue is empty. Go ahead and send it on to the internal FJ pool.
             bypassed.increment();
             return submitDirectly(task);
         } else {
@@ -95,7 +88,30 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
         }
     }
 
-    protected abstract <T> void addWork(ForkJoinTask<T> task);
+    /**
+     * Should this task be executed locally if our current pool is empty?
+     * Typically, we will bypass the normal task distribution mechanism if our local queue is idle (or nearly so), on
+     * the assumption that executing locally is faster than distributing the task. If that is not true for your case,
+     * though, then override this method.
+     *
+     * For example, if your tasks use data that may or may not be present in local cache, you may want to always return
+     * false here, or to actually check for the presence of the data in the local cache within this method. Note that
+     * this is called for every distributed task submission, so you are encouraged to keep it fast.
+     *
+     * @return true if this task should execute locally if the queue is nearly empty (meaning that local execution will
+     * be generally faster than distributed execution), false otherwise.
+     * @param task
+     */
+    protected <T> boolean preferLocalExecution(DistributedFJTask<T> task) {
+        // The default implementation always returns "true", on the assumption that any task can be executed on any server.
+        return true;
+    }
+
+    private boolean shouldDistribute() {
+        return this.hasQueuedSubmissions();
+    }
+
+    protected abstract <T> void addWork(DistributedFJTask<T> task);
 
     protected abstract <T> void notifyListenersOfNewTask(ForkJoinTask<T> task);
 
@@ -145,7 +161,7 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
         }
 
         if (task instanceof DistributedFJTask) {
-            return submitDistributable(task);
+            return submitDistributable((DistributedFJTask<T>) task);
         } else {
             return submitDirectly(task);
         }
@@ -154,7 +170,7 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
     @Override
     public <T> T invoke(ForkJoinTask<T> task) {
         if (task instanceof DistributedFJTask) {
-            submitDistributable(task);
+            submitDistributable((DistributedFJTask<T>) task);
         } else {
             submitDirectly(task);
         }
@@ -164,7 +180,7 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
     @Override
     public void execute(ForkJoinTask<?> task) {
         if (task instanceof DistributedFJTask) {
-            submitDistributable(task);
+            submitDistributable((DistributedFJTask<?>) task);
         } else {
             submitDirectly(task);
         }
@@ -187,14 +203,14 @@ public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool imple
      * forkJoinPool.hasQueuedSubmissions(), which returns true if there are
      * tasks in the queue that have not yet been started. Therefore it can still
      * return true even though every thread is currently executing, provided
-     * there is no additional work in the queue. That is the desired behavior,
+     * there is no additional work in the queue. That is the desired behavior
      * on the assumption that a.) each task is fairly short-lived, and b.)
      * fetching more work may involve a distributed operation, which could take
      * some time. Therefore, it's better to start fetching more work before any
      * threads are idle, on the hopes that it will be ready for them when they
      * need it.
      *
-     * However, implementors may want to override this behavior. If, on the one
+     * However, implementers may want to override this behavior. If, on the one
      * hand, fetching more work takes a particularly long time, you may want to
      * replace this with a heuristic that fetches more work earlier -- perhaps
      * when the work queue reaches a particular threshold. On the other hand, if
