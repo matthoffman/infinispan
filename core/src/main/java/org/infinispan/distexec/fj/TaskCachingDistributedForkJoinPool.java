@@ -2,16 +2,10 @@ package org.infinispan.distexec.fj;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.affinity.KeyAffinityService;
-import org.infinispan.affinity.KeyAffinityServiceFactory;
-import org.infinispan.affinity.UUIDKeyGenerator;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.context.Flag;
-import org.infinispan.distexec.DefaultExecutorService;
-import org.infinispan.distexec.DistributedTask;
-import org.infinispan.distexec.DistributedTaskBuilder;
 import org.infinispan.distribution.DistributionManager;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.notifications.Listener;
@@ -21,16 +15,12 @@ import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
 import org.infinispan.notifications.cachelistener.event.CacheEntryModifiedEvent;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
-import org.infinispan.remoting.rpc.RpcManager;
-import org.infinispan.remoting.transport.Address;
 import org.infinispan.util.concurrent.ConcurrentMapFactory;
 import org.infinispan.util.concurrent.FutureListener;
 import org.infinispan.util.concurrent.NotifyingFuture;
 import org.infinispan.util.concurrent.NotifyingFutureAdaptor;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
-import org.infinispan.util.concurrent.jdk8backported.LongAdder;
 
-import java.io.Serializable;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
@@ -78,47 +68,7 @@ import static org.infinispan.util.Util.rewrapAsCacheException;
  * @since 5.3
  *
  */
-public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJoinPool {
-
-    /**
-     * Used by our KeyAffinityService
-     */
-    private static final int KEY_QUEUE_SIZE = 100;
-
-    /**
-     * We use this to generate keys that are guaranteed to map to our local node. That way, when we
-     * have a job submitted that doesn't have a cache key attached, we can still add it to the task
-     * cache (so that it is distributed, and can be stolen) but we have the chance of working on it
-     * locally. Which we would generally prefer.
-     */
-    final KeyAffinityService keyAffinityService;
-
-    /**
-     * We use extra threads for a number of small things
-     */
-    final ExecutorService utilityThreadPool = Executors.newCachedThreadPool();
-
-    /**
-     * note that we rely on this executorService's behavior: it will run things with a fixed delay,
-     * and if one execution blocks (waiting for available work, for example) it will not concurrently
-     * execute any additional executions.
-     */
-    final ScheduledExecutorService scheduledThreadPool;
-
-    /**
-     * we have to keep track of tasks that we've generated locally and then handed off to remote
-     * nodes to execute, because we'll have other tasks within the ForkJoinPool that are waiting for
-     * those tasks to complete (in an Object.wait() sense); when a remote node completes the task, we
-     * need to mark our representation of that task complete.
-     */
-    final ConcurrentMap<Object, DistributedFJTask<?>> taskIdToTaskMap = ConcurrentMapFactory.makeConcurrentMap();
-
-    /**
-     * The cache we're using to target tasks; if our tasks are processing cached data, then this will
-     * be the cache that holds the data we're processing. If we're not, then we'll just use the cache
-     * for its distribution configuration.
-     */
-    protected final AdvancedCache cache;
+public class TaskCachingDistributedForkJoinPool extends InfinispanDistributedForkJoinPool {
 
     /**
      * The suffix we'll use to generate the name of the cache we're using to hold tasks.
@@ -166,18 +116,6 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
     private final BlockingQueue<InternalTask> completedTaskQueue;
 
     /**
-     * The address of this node.
-     */
-    final Address myAddress;
-
-    /**
-     * A few metrics we'll keep for reporting purposes
-     */
-    protected LongAdder distributableExecutedAsOriginator = new LongAdder();
-    protected LongAdder distributableExecutedNotOriginator = new LongAdder(); // this is probably overkill; I don't really care if we miss a count now and then.
-    protected Long unsuccessfulCheckout = 0L;
-
-    /**
      * Create a new cache, using the provided cache as a template for data distribution.
      * @param cache
      */
@@ -186,14 +124,12 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
     }
 
     public TaskCachingDistributedForkJoinPool(Cache cache, int parallelism) {
-        super(parallelism, defaultForkJoinWorkerThreadFactory, null /* TODO: Consider an uncaught exception handler? */, false);
+        super(parallelism, defaultForkJoinWorkerThreadFactory, null /* TODO: Consider an uncaught exception handler? */, false, cache);
 
-        this.cache = cache.getAdvancedCache();
         //TODO: at this point, "cache" could be a local-mode cache. Does that really make any sense? Should we fail in that case?
         // we'll make the taskCache distributed, either way.
         this.taskCache = createTaskCache(cache, createTaskCacheName(cache.getName(), taskCacheNameSuffix));
-        this.keyAffinityService = KeyAffinityServiceFactory.newKeyAffinityService(taskCache, utilityThreadPool,
-                new UUIDKeyGenerator(), KEY_QUEUE_SIZE);
+
 
         this.availableTasks = new LinkedBlockingQueue<Object>();
 
@@ -201,8 +137,7 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
         //      this.taskResultWatcher = new TaskResultWatcher(completedTaskQueue);
 
         this.taskCache.addListener(new AvailableTaskListener(taskCache));
-        scheduledThreadPool = Executors.newScheduledThreadPool(2);
-        this.myAddress = getOurAddress(taskCache);
+
         try {
             // start listening.
             // Normal Executors have no separate "start" method; they start on construction. So we have to do the same.
@@ -327,23 +262,8 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
 //      cache.getRpcManager().broadcastRpcCommand( /* command to tell the remote machine to start up a cache */ );
     }
 
-    /**
-     * This doesn't make any sense for this executor, at least how it's currently written; we don't use DistributedTasks. They're wrappers for Callables, and we need to wrap ForkJoinTasks.
-     * @param callable the execution unit of DistributedTask
-     * @param <T>
-     * @return
-     */
     @Override
-    public <T> DistributedTaskBuilder<T> createDistributedTaskBuilder(Callable<T> callable) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    protected <T> void addWork(ForkJoinTask<T> forkJoinTask) {
-        if (!(forkJoinTask instanceof DistributedFJTask)) {
-            throw new IllegalArgumentException("task must be distributable");
-        }
+    protected <T> void addWork(DistributedFJTask<T> forkJoinTask) {
         // is this task cache-aware?
         Object taskId;
         if (forkJoinTask instanceof KeyAwareDistributedFJTask<?>) {
@@ -356,7 +276,7 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
             // if not, generate a key meaning "us" and add it to the cache.
             taskId = keyAffinityService.getKeyForAddress(myAddress);
         }
-        InternalTask internalTask = new InternalTask(taskId, (DistributedFJTask) forkJoinTask, myAddress);
+        InternalTask internalTask = new InternalTask(taskId, forkJoinTask, myAddress);
         // TODO: If this task is local to us, would we like to pop this onto the
         // front of the availableWorkQueue as well? So we're more likely to grab
         // it first?
@@ -370,54 +290,6 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
     protected <T> void notifyListenersOfNewTask(ForkJoinTask<T> task) {
         // TODO Auto-generated method stub
 
-    }
-
-    @Override
-    public <T> Future<T> submit(Address target, Callable<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> Future<T> submit(Address target, DistributedTask<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> Future<T> submit(Callable<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> Future<T> submit(DistributedTask<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> List<Future<T>> submitEverywhere(Callable<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> List<Future<T>> submitEverywhere(DistributedTask<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> List<Future<T>> submitEverywhere(Callable<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> List<Future<T>> submitEverywhere(DistributedTask<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
     }
 
     /**
@@ -583,127 +455,6 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
         InternalTask newTask = new InternalTask(task.getTaskId(), task.getFJTask(), task.getOriginAddress(),
                 InternalTask.Status.FAILED, myAddress, t);
         markSuccessOrFailureInCache(task, newTask);
-    }
-
-    /**
-     * Our internal wrapper around a ForkJoinTask, tracking its state and anything else we need to
-     * know when distributing it.
-     *
-     * Intentionally immutable; it makes reasoning about it easier.
-     *
-     * @author Matt Hoffman
-     * @since 5.2
-     */
-    public static class InternalTask implements Serializable {
-        private static final long serialVersionUID = -8205266104709317848L;
-
-        enum Status {
-            READY, IN_PROGRESS, COMPLETE, FAILED
-        }
-
-        final Object taskId;
-
-        final Status status;
-
-        final DistributedFJTask task;
-
-        final Address originAddress;
-        Address executedBy;
-
-        final private Throwable exception;
-
-        public InternalTask(Object taskId, DistributedFJTask forkJoinTask, Address originAddress, Status status,
-                            Address currentlyWorkingOn, Throwable throwable) {
-            this.taskId = taskId;
-            this.task = forkJoinTask;
-            this.status = status;
-            this.originAddress = originAddress;
-            this.executedBy = currentlyWorkingOn;
-            this.exception = throwable;
-        }
-
-        public InternalTask(Object taskId, DistributedFJTask forkJoinTask, Address originAddress) {
-            this(taskId, forkJoinTask, originAddress, Status.READY, null, null);
-        }
-
-        public DistributedFJTask getFJTask() {
-            return task;
-        }
-
-        public Status getStatus() {
-            return status;
-        }
-
-        public boolean isComplete() {
-            return status == Status.FAILED || status == Status.COMPLETE;
-        }
-
-        public Address getOriginAddress() {
-            return originAddress;
-        }
-
-        public Address getExecutedBy() {
-            return executedBy;
-        }
-
-        public Throwable getThrowable() {
-            return exception;
-        }
-
-        public Object getTaskId() {
-            return taskId;
-        }
-
-        @Override
-        public int hashCode() {
-            final int prime = 31;
-            int result = 1;
-            result = prime * result + ((executedBy == null) ? 0 : executedBy.hashCode());
-            result = prime * result + ((originAddress == null) ? 0 : originAddress.hashCode());
-            result = prime * result + ((status == null) ? 0 : status.hashCode());
-            result = prime * result + ((task == null) ? 0 : task.hashCode());
-            return result;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj)
-                return true;
-            if (obj == null)
-                return false;
-            if (getClass() != obj.getClass())
-                return false;
-            InternalTask other = (InternalTask) obj;
-            if (executedBy == null) {
-                if (other.executedBy != null)
-                    return false;
-            } else if (!executedBy.equals(other.executedBy))
-                return false;
-            if (originAddress == null) {
-                if (other.originAddress != null)
-                    return false;
-            } else if (!originAddress.equals(other.originAddress))
-                return false;
-            if (status != other.status)
-                return false;
-            if (task == null) {
-                if (other.task != null)
-                    return false;
-            } else if (!task.equals(other.task))
-                return false;
-            return true;
-        }
-
-        @Override
-        public String toString() {
-            return "InternalTask [" + (taskId != null ? "taskId=" + taskId + ", " : "")
-                    + (status != null ? "status=" + status + ", " : "")
-                    + (exception != null ? "exception=" + exception + ", " : "")
-                    + (originAddress != null ? "created by=" + originAddress + ", " : "")
-                    + (executedBy != null ? "executed by=" + executedBy + ", " : "") + (task != null ? "task=" + task : "")
-                    + "]";
-        }
-
     }
 
     /**
@@ -882,17 +633,6 @@ public class TaskCachingDistributedForkJoinPool extends AbstractDistributedForkJ
 
     private static class WatchingStats {
         // nothing here...perhaps we'll want something?
-    }
-
-    public static Address getOurAddress(Cache cache) {
-        RpcManager rpc = cache.getAdvancedCache().getRpcManager();
-        if (rpc != null) {
-            Address a = rpc.getAddress();
-            if (a != null) {
-                return a;
-            }
-        }
-        return DefaultExecutorService.LOCAL_MODE_ADDRESS;
     }
 
 }
