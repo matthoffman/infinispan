@@ -6,16 +6,16 @@ import org.infinispan.affinity.KeyAffinityService;
 import org.infinispan.affinity.KeyAffinityServiceFactory;
 import org.infinispan.affinity.UUIDKeyGenerator;
 import org.infinispan.distexec.DefaultExecutorService;
-import org.infinispan.distexec.DistributedTask;
-import org.infinispan.distexec.DistributedTaskBuilder;
 import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.util.concurrent.ConcurrentMapFactory;
+import org.infinispan.util.CollectionFactory;
 import org.infinispan.util.concurrent.jdk8backported.LongAdder;
 
 import java.io.Serializable;
-import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 /**
  * TODO: document me.
@@ -55,7 +55,7 @@ public abstract class InfinispanDistributedForkJoinPool extends AbstractDistribu
      * those tasks to complete (in an Object.wait() sense); when a remote node completes the task, we
      * need to mark our representation of that task complete.
      */
-    final ConcurrentMap<Object, DistributedFJTask<?>> taskIdToTaskMap = ConcurrentMapFactory.makeConcurrentMap();
+    final ConcurrentMap<Object, DistributedFJTask<?>> taskIdToTaskMap = CollectionFactory.makeConcurrentMap();
     /**
      * The address of this node.
      */
@@ -93,59 +93,11 @@ public abstract class InfinispanDistributedForkJoinPool extends AbstractDistribu
      * @param <T>
      * @return
      */
-    @Override
-    public <T> DistributedTaskBuilder<T> createDistributedTaskBuilder(Callable<T> callable) {
-        // TODO Auto-generated method stub
-        return null;
-    }
+//    public <T> DistributedTaskBuilder<T> createDistributedTaskBuilder(Callable<T> callable) {
+//        // TODO Auto-generated method stub
+//        return null;
+//    }
 
-    @Override
-    public <T> Future<T> submit(Address target, Callable<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> Future<T> submit(Address target, DistributedTask<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> Future<T> submit(Callable<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> Future<T> submit(DistributedTask<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> List<Future<T>> submitEverywhere(Callable<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T> List<Future<T>> submitEverywhere(DistributedTask<T> task) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> List<Future<T>> submitEverywhere(Callable<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
-
-    @Override
-    public <T, K> List<Future<T>> submitEverywhere(DistributedTask<T> task, K... input) {
-        // TODO Auto-generated method stub
-        return null;
-    }
 
     /**
      * Our internal wrapper around a ForkJoinTask, tracking its state and anything else we need to

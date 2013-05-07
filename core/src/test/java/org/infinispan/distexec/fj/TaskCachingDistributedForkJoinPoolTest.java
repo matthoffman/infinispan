@@ -1,11 +1,7 @@
 package org.infinispan.distexec.fj;
 
-import org.infinispan.configuration.cache.CacheMode;
-import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.distexec.fj.TaskCachingDistributedForkJoinPool.InternalTask;
 import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.remoting.transport.Address;
-import org.infinispan.test.MultipleCacheManagersTest;
 import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
@@ -32,41 +28,15 @@ import static junit.framework.Assert.assertNotNull;
  *
  */
 @Test(groups = "functional", testName = "distexec.fj.TaskCachingDistributedForkJoinPoolTest")
-public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheManagersTest {
+public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheDistributedForkJoinPoolTest {
     //    static final Logger log = LoggerFactory.getLogger(DistributedForkJoinPoolTest.class);
 
     TaskCachingDistributedForkJoinPool[] pools;
-    protected boolean supportsConcurrentUpdates = true;
-
-    @Override
-    protected void createCacheManagers() throws Throwable {
-        cb = createConfigurationBuilder();
-        createClusteredCaches(1, cacheName(), cb);
-        for (EmbeddedCacheManager cacheManager : cacheManagers) {
-            cacheManager.defineConfiguration(TaskCachingDistributedForkJoinPool.defaultTaskCacheConfigurationName,
-                    cb.build());
-        }
-    }
-
-    protected ConfigurationBuilder createConfigurationBuilder() {
-        ConfigurationBuilder configBuilder = getDefaultClusteredCacheConfig(getCacheMode(), false);
-        configBuilder.locking().supportsConcurrentUpdates(supportsConcurrentUpdates);
-        return configBuilder;
-    }
-
-    protected CacheMode getCacheMode() {
-        return CacheMode.DIST_SYNC;
-    }
-
-    protected String cacheName() {
-        return "DistributedFJPoolTest-DIST_SYNC";
-    }
 
     public TaskCachingDistributedForkJoinPoolTest() {
         cleanup = CleanupPhase.AFTER_METHOD;
     }
 
-    ConfigurationBuilder cb;
     EmbeddedCacheManager cacheManager;
 
     @AfterTest
@@ -218,9 +188,9 @@ public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheManager
     protected void buildTaskDistributionMaps(Map<Object, Long> originationCountMap, Map<Object, Long> executionCountMap,
                                              Map<Integer, Long> taskCountMap) {
         for (int i = 0; i < pools.length; i++) {
-            Collection<InternalTask> tasks = pools[i].taskCache.values();
+            Collection<InfinispanDistributedForkJoinPool.InternalTask> tasks = pools[i].taskCache.values();
             long count = 0;
-            for (InternalTask internalTask : tasks) {
+            for (InfinispanDistributedForkJoinPool.InternalTask internalTask : tasks) {
                 addToMap(executionCountMap, internalTask.executedBy);
                 addToMap(originationCountMap, internalTask.originAddress);
             }
@@ -356,71 +326,4 @@ public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheManager
         return "q-test-" + UUID.randomUUID().toString();
     }
 
-    public static class LocalSumTest extends LocalFJTask<Long> {
-        private static final long serialVersionUID = -202940051703769607L;
-
-        final int start;
-        final int end;
-        final int threshold;
-
-        public LocalSumTest(int start, int end, int threshold) {
-            this.start = start;
-            this.end = end;
-            this.threshold = threshold;
-        }
-
-        @Override
-        protected Long compute() {
-            if ((end - start) > threshold) {
-                // split the job in two
-                int newEnd = start + (end - start) / 2;// pick a point halfway between start and end.
-                LocalSumTest job1 = new LocalSumTest(start, newEnd, threshold);
-                LocalSumTest job2 = new LocalSumTest(newEnd + 1, end, threshold);
-                // submit those two
-                invokeAll(job1, job2);
-                // return the sum
-                return job1.join() + job2.join();
-            } else {
-                // do the work
-                long sum = 0;
-                for (int i = start; i < end; i++) {
-                    sum += i;
-                }
-                return sum;
-            }
-        }
-    }
-
-    public static class NormalFJSumTest extends org.infinispan.util.concurrent.jdk8backported.RecursiveTask<Long> {
-        final int start;
-        final int end;
-        final int threshold;
-
-        public NormalFJSumTest(int start, int end, int threshold) {
-            this.start = start;
-            this.end = end;
-            this.threshold = threshold;
-        }
-
-        @Override
-        protected Long compute() {
-            if ((end - start) > threshold) {
-                // split the job in two
-                int newEnd = start + (end - start) / 2;// pick a point halfway between start and end.
-                NormalFJSumTest job1 = new NormalFJSumTest(start, newEnd, threshold);
-                NormalFJSumTest job2 = new NormalFJSumTest(newEnd + 1, end, threshold);
-                // submit those two
-                invokeAll(job1, job2);
-                // return the sum
-                return job1.join() + job2.join();
-            } else {
-                // do the work
-                long sum = 0;
-                for (int i = start; i < end; i++) {
-                    sum += i;
-                }
-                return sum;
-            }
-        }
-    }
 }

@@ -1,6 +1,5 @@
 package org.infinispan.distexec.fj;
 
-import org.infinispan.distexec.DistributedExecutorService;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinTask;
 import org.infinispan.util.concurrent.jdk8backported.LongAdder;
@@ -15,7 +14,7 @@ import java.lang.Thread.UncaughtExceptionHandler;
  * Adds a distributed processing wrapper around a normal ForkJoinPool.
  *
  */
-public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool implements DistributedExecutorService {
+public abstract class AbstractDistributedForkJoinPool extends ForkJoinPool { // implements DistributedExecutorService {
 
     protected static final Log log = LogFactory.getLog(AbstractDistributedForkJoinPool.class);
 

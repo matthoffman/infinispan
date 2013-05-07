@@ -1,6 +1,6 @@
 package org.infinispan.distexec.fj;
 
-import org.infinispan.util.concurrent.jdk8backported.ConcurrentHashMapV8;
+import org.infinispan.util.CollectionFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +18,7 @@ public class DistributedSumTask extends DistributedFJTask<Long> {
 
     private static final long serialVersionUID = 1508664573598369190L;
 
-    public static final ConcurrentMap<String, List<String>> taskMap = new ConcurrentHashMapV8<String, List<String>>();
+    public static final ConcurrentMap<String, List<String>> taskMap = CollectionFactory.makeConcurrentMap();
 
     final int start;
     final int end;

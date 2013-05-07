@@ -15,7 +15,7 @@ import org.infinispan.notifications.cachelistener.annotation.DataRehashed;
 import org.infinispan.notifications.cachelistener.event.CacheEntryCreatedEvent;
 import org.infinispan.notifications.cachelistener.event.CacheEntryModifiedEvent;
 import org.infinispan.notifications.cachelistener.event.DataRehashedEvent;
-import org.infinispan.util.concurrent.ConcurrentMapFactory;
+import org.infinispan.util.CollectionFactory;
 import org.infinispan.util.concurrent.FutureListener;
 import org.infinispan.util.concurrent.NotifyingFuture;
 import org.infinispan.util.concurrent.NotifyingFutureAdaptor;
@@ -267,7 +267,7 @@ public class TaskCachingDistributedForkJoinPool extends InfinispanDistributedFor
         // is this task cache-aware?
         Object taskId;
         if (forkJoinTask instanceof KeyAwareDistributedFJTask<?>) {
-            List<Object> keys = ((KeyAwareDistributedFJTask) forkJoinTask).keys();
+            List<Object> keys = ((KeyAwareDistributedFJTask<?>) forkJoinTask).keys();
             // if so, add it to the cache using its desired cache key. If this task conforms to multiple,
             // we'll just pick the first. I'm not sure that a more intelligent algorithm would be worth
             // the cost here.
@@ -594,7 +594,7 @@ public class TaskCachingDistributedForkJoinPool extends InfinispanDistributedFor
      * time out tasks if necessary. Tradeoffs, always tradeoffs...
      */
     private class TaskResultWatcher implements Runnable {
-        final ConcurrentMap<InternalTask, WatchingStats> tasks = ConcurrentMapFactory.makeConcurrentMap();
+        final ConcurrentMap<InternalTask, WatchingStats> tasks = CollectionFactory.makeConcurrentMap();
         final BlockingQueue<InternalTask> completedTaskQueue;
 
         public TaskResultWatcher(BlockingQueue<InternalTask> completedTaskQueue) {

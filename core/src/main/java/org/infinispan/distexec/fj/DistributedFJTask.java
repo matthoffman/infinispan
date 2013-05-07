@@ -1,5 +1,6 @@
 package org.infinispan.distexec.fj;
 
+import org.infinispan.util.concurrent.AbstractInProcessFuture;
 import org.infinispan.util.concurrent.FutureListener;
 import org.infinispan.util.concurrent.NotifyingFuture;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
@@ -10,9 +11,7 @@ import org.infinispan.util.concurrent.jdk8backported.RecursiveTask;
 import java.io.IOException;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.RunnableFuture;
+import java.util.concurrent.*;
 
 /**
  * TODO: change this to an interface, and let the main implementor extend RecursiveTask? Then we'd
@@ -114,10 +113,16 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
      * The main computation performed by this task.
      */
     protected final V compute() {
+        V v = null;
+        RuntimeException e = null;
         try {
-            return doCompute();
+            v = doCompute();
+            return v;
+        } catch (RuntimeException r) {
+            e = r;
+            throw r;
         } finally {
-            invokeListeners();
+            invokeListeners(v, e);
         }
     }
 
@@ -136,10 +141,29 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
     //      }
     //   }
 
-    private void invokeListeners() {
+    private void invokeListeners(final V v, final RuntimeException e) {
         if (listeners != null) {
+            // we need to construct a fake future instead of just returning 'this' (since we do implement future)
+            // because the place where this is executing is before we've set the value, recorded the exception, and so on.
+            // Unfortunately, the ForkJoinTask doesn't let us override that part. So, we have to hack around it.
+            Future<V> f;
+            if (e != null) {
+                f = new AbstractInProcessFuture<V>() {
+                    @Override
+                    public V get() throws InterruptedException, ExecutionException {
+                        throw new ExecutionException(e);
+                    }
+                };
+            } else {
+                f = new AbstractInProcessFuture<V>() {
+                    @Override
+                    public V get() throws InterruptedException, ExecutionException {
+                        return v;
+                    }
+                };
+            }
             for (FutureListener<V> listener : listeners) {
-                invokeListener(listener);
+                invokeListener(listener, f);
             }
         }
     }
@@ -158,7 +182,7 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
         }
         listeners.add(listener);
         if (isDone()) {
-            invokeListener(listener);
+            invokeListener(listener, this);
         }
         return this;
     }
@@ -176,8 +200,8 @@ public abstract class DistributedFJTask<V> extends RecursiveTask<V> implements N
         }
     }
 
-    private void invokeListener(FutureListener<V> listener) {
-        listener.futureDone(this);
+    private void invokeListener(FutureListener<V> listener, Future<V> f) {
+        listener.futureDone(f);
     }
 
     @Override
