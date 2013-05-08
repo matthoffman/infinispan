@@ -424,7 +424,7 @@ public class JGroupsDistributedForkJoinPool extends InfinispanDistributedForkJoi
         private void handleLeftMembers(List<org.jgroups.Address> leftMembers) {
             if (leftMembers != null) {
                 for (org.jgroups.Address member : leftMembers) {
-                    Set<TaskAndSource> membersTasks = getTasksExecutedByMember(member);
+                    Collection<TaskAndSource> membersTasks = getTasksExecutedByMember(member);
 //                    Set<DistributedFJTask<?>> membersTasks = getTasksExecutedByMember(member);
                     for (TaskAndSource taskAndSrc : membersTasks) {
                         if (iAmNextLivingMember(taskAndSrc.executors)) {
@@ -482,18 +482,18 @@ public class JGroupsDistributedForkJoinPool extends InfinispanDistributedForkJoi
         return nextLivingMember != null && nextLivingMember.equals(channel.getAddress());
     }
 
-    private Set<TaskAndSource> getTasksExecutedByMember(org.jgroups.Address member) {
-        Set<TaskAndSource> set = executorToTaskMap.get(member);
-        if (set == null) {
+    private Collection<TaskAndSource> getTasksExecutedByMember(org.jgroups.Address member) {
+        Map<String, TaskAndSource> map = executorToTaskMap.get(member);
+        if (map == null) {
             return Collections.emptySet();
         } else {
-            return set;
+            return map.values();
         }
     }
 
     ConcurrentMap<String, TaskAndSource> tasksIDistributed = CollectionFactory.makeConcurrentMap();
     ConcurrentMap<String, TaskAndSource> tasksDistributedToMe = CollectionFactory.makeConcurrentMap();
-    ConcurrentMap<org.jgroups.Address, Set<TaskAndSource>> executorToTaskMap = CollectionFactory.makeConcurrentMap();
+    ConcurrentMap<org.jgroups.Address, Map<String, TaskAndSource>> executorToTaskMap = CollectionFactory.makeConcurrentMap();
 
 
     public static class TaskAndSource {
@@ -533,7 +533,10 @@ public class JGroupsDistributedForkJoinPool extends InfinispanDistributedForkJoi
     private void cleanupTaskMaps(String taskId, org.jgroups.Address address) {
         tasksIDistributed.remove(taskId);
         tasksDistributedToMe.remove(taskId);
-        executorToTaskMap.remove(address);
+        Map<String, TaskAndSource> map = executorToTaskMap.get(address);
+        if (map != null) {
+            map.remove(taskId);
+        }
     }
 
     private void handleExecuteMessage(ExecuteMessage msg, Message message) {
@@ -542,8 +545,8 @@ public class JGroupsDistributedForkJoinPool extends InfinispanDistributedForkJoi
         tasksDistributedToMe.put(task.getId(), taskAndSource);
         org.jgroups.Address executor = nextLivingMember(msg.getAddresses());
         if (executor != null) {
-            executorToTaskMap.putIfAbsent(executor, new HashSet<TaskAndSource>());
-            executorToTaskMap.get(executor).add(taskAndSource);
+            executorToTaskMap.putIfAbsent(executor, new HashMap<String, TaskAndSource>());
+            executorToTaskMap.get(executor).put(task.getId(), taskAndSource);
             // if I'm the next living member, execute it.
             if (executor.equals(channel.getAddress())) {
                 executeDistributableTask(task, message.getSrc());

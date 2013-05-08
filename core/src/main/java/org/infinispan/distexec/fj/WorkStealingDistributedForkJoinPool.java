@@ -159,7 +159,7 @@ public class WorkStealingDistributedForkJoinPool extends AbstractDistributedFork
     private TimeUnit pollPeriod = TimeUnit.MILLISECONDS;
 
     private static final String DEFAULT_GROUP_NAME = "dist-work-group";
-    private static final String DEFAULT_CONFIGURATION_FILE = "tcp-nio.xml";
+    private static final String DEFAULT_CONFIGURATION_FILE = "jgroups-udp.xml";
 
     /**
      * We use extra threads for a number of things; watching tasks for
