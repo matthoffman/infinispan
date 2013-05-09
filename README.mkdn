@@ -1,3 +1,65 @@
+# About this 'dfj' branch #
+
+This branch contains several prototypes (3, at last count) of a distributed fork-join executor. 
+
+## Why? Doesn't Infinispan have a distributed executor? ## 
+
+Infinispan's existing DistributedExecutorService is to DistributedForkJoinPool what a normal Java thread pool is to a fork-join pool:  that is, they're different pools for different tasks, with different performance characteristics and tradeoffs. It is worth noting that inital performance numbers for the DistributedForkJoinPools are quite good. 
+
+## What is Fork-Join good for? ## 
+
+From the javadoc for ForkJoinPool:  "[it] enables efficient processing when most tasks spawn other subtasks (as do most ForkJoinTasks), as well as when many small tasks are submitted to the pool from external clients." 
+The primary use-case where Fork-Join stands out are jobs which spawn other jobs, often by recursively decomposing the problem into smaller pieces. The single-JVM implementation of ForkJoinPool also happens to be a quite efficient pool by virtue of its work-stealing mechanics, so it is also often used for applications with many short tasks (actor frameworks, event handlers, etc.). 
+It remains to be seen whether the distributed version of Fork-Join is similarly efficient for small tasks. 
+
+## How do they work? ## 
+
+In the javadoc of RecursiveTask, Doug Lea writes: 
+
+>   For a classic example, here is a task computing Fibonacci numbers: 
+
+      class Fibonacci extends RecursiveTask<Integer> {
+        final int n;
+        Fibonacci(int n) { this.n = n; }
+        Integer compute() {
+          if (n <= 1)
+             return n;
+          Fibonacci f1 = new Fibonacci(n - 1);
+          f1.fork();
+          Fibonacci f2 = new Fibonacci(n - 2);
+          return f2.compute() + f1.join();
+        }
+      }
+
+>  However, besides being a dumb way to compute Fibonacci functions
+>  (there is a simple fast linear algorithm that you'd use in
+>  practice), this is likely to perform poorly because the smallest
+>  subtasks are too small to be worthwhile splitting up. Instead, as
+>  is the case for nearly all fork/join applications, you'd pick some
+>  minimum granularity size (for example 10 here) for which you always
+>  sequentially solve rather than subdividing. 
+
+
+The same principle of minimum granularity applies for distribution. So while there is some granularity at which it no longer makes sense to subdivide further, there is also some (much coarser) granularity at which it no longer makes sense to distribute the task. It is very difficult to algorithmically determine what that granularity is, so we leave that to the programmer. For these implementations, the programmer indicates that a task or subtask is sufficiently coarse-grained to be distributed by making it extend DistributedFJTask, instead of the normal ForkJoinTask. Doing so does not guarantee that the task will be distributed, but indicates that it can be. 
+
+_(TODO: insert a DistributedFibonacci example here)_
+
+The three implementations are as follows: 
+
+1. **WorkStealingDistributedForkJoinPool**: Like the name suggests, this is Doug Lea's Fork-Join algorithm expanded to a distributed setting.  When a task creates a new DistributedFJTask, it is placed in a special deque (double-ended queue). When the normal pool runs low on work, it pulls tasks out of its deque of distributable tasks.  If it dosen't have any jobs in its distributed deque, it will send a message to a random set of other nodes to ask for work. If they have any tasks in their deque of distributable tasks, they'll send them. 
+2. **JGroupsDistributedForkJoinPool**: This co-opts the Infinispan JGroupsTransport to distribute tasks. In a proper implementation, it could use the Command pattern like other parts of Infinispan, but going directly to JGroups was simpler for a proof-of-concept. The algorithm here is not work-stealing, but instead borrows from Bela Ban's [Task Distribution with JGroups](http://www.jgroups.org/taskdistribution/TaskDistribution.pdf) paper. It deviates in which nodes receive which tasks: this implementation reuses Infinispan's consistent hash so that a.) each task is sent to only a subset of nodes, and b.) a task that indicates that it works on data that is in the cache (by extending KeyAwareDistributedFJTask) will be distributed to a node that owns that data. 
+3. **TaskCachingDistributedForkJoinPool**: A lot of the code in the above two implementations were around making sure other nodes knew about the tasks that were in progress for fault-tolerance, as well as coordinating who was working on what task. For example, JGroupsDistributedForkJoinPool makes sure to send the task to several nodes at once, where one is primary and the others are secondary, so that if the primary node fails the others can take over that node's tasks. That has a lot of similarity with Infinispan's DIST-mode cache. So this cache uses a cache for the actual distribution of tasks. It also reuses the ConsistentHash, so that tasks are distributed to nodes that contain relevant data where possible. 
+
+## Caveats ##
+
+* These pools required one change to the standard JVM forkJoin classes: one method in org.infinispan.util.concurrent.jdk8backported.ForkJoinTask was changed to remove a "final" keyword. Since Infinispan already has their own copies of these files, it is less of a problem than it might otherwise be, but it's worth noting. 
+* These pools don't currently implement the DistributedExecutorService interface. The interface has a number of methods that involve targetting jobs to particular nodes, which don't really make sense for two out of the three of the implementations.  We could work around that if it's worthwhile, or split the implementation. 
+* All of the pools currently need to be started on all nodes before they can share work. This is unlike the current DistributedExecutorService, which just pushes a callable to another node where it is executed. We could work around this in a number of ways, including having a command that is broadcast to nodes to start a pool on demand (start a pool on one, and it will tell the other nodes to start one as well). Or, we can leave it as-is and assume that callers will start the pools themselves. But the difference in behavior from the existing DistributedExecutorService might be confusing. 
+* There are a couple of shortcuts worth noting: 
+    1. The JGroupsDistributedForkJoinPool currently assumes that the transport is JGroups and registers its own listener with Infinispan's internal JGroupsTransport. That is awkward, and not a go-forward approach, but it was worthwhile for the sake of testing (we're particularly interested in whether going directly to JGroups has significant performance advantages; if it does, we can look into better ways to do that). 
+    2. The WorkStealingDistributedForkJoinPool started its life outside of Infinispan, and it doesn't integrate particularly closely.  It starts up its own JGroups cluster and doesn't target tasks to the cache. It is interesting as an example of a work-stealing algorithm in a distributed setting, though. 
+    3. I'm sure there are others, but I don't remember currently. 
+
 # The Infinispan project #
 
 Infinispan is an open source (LGPL licensed) data grid platform.  For more information on Infinispan, including HOWTOs, getting started guides, build instructions and downloading binaries, visit the project's website on [http://www.infinispan.org](http://www.infinispan.org "The Infinispan project page")
