@@ -1,5 +1,6 @@
 package org.infinispan.distexec.fj;
 
+import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
 import org.jgroups.Address;
 import org.jgroups.util.Util;
@@ -60,7 +61,11 @@ public class JGroupsDistributedForkJoinPoolTest extends MultipleCacheDistributed
 
     @Test
     public void testBasic() throws Exception {
-
+        createClusteredCaches(1, cacheName(), cb);
+        for (EmbeddedCacheManager cacheManager : cacheManagers) {
+            cacheManager.defineConfiguration(TaskCachingDistributedForkJoinPool.defaultTaskCacheConfigurationName,
+                    cb.build());
+        }
         JGroupsDistributedForkJoinPool forkJoinPool = null;
         try {
             forkJoinPool = new JGroupsDistributedForkJoinPool(cache(0, cacheName()), 1, null);
@@ -79,35 +84,32 @@ public class JGroupsDistributedForkJoinPoolTest extends MultipleCacheDistributed
 
     @Test
     public void testBasic_clustered_localSums() throws Exception {
-        createClusteredCaches(1, cacheName(), cb);
         String uniqueName = getUniqueName();
-        JGroupsDistributedForkJoinPool pool1 = new JGroupsDistributedForkJoinPool(cache(0, cacheName()), 1, null);
-        JGroupsDistributedForkJoinPool pool2 = new JGroupsDistributedForkJoinPool(cache(1, cacheName()), 1, null);
-        assertHappyCluster(pool1, pool2);
+        pools = createCluster(2, uniqueName, 1);
+        assertHappyCluster(pools[0], pools[1]);
 
 
         long start = System.currentTimeMillis();
         final int end = 10000;
-        Future<Long> sum = pool1.submit(new LocalSumTest(1, end, 10));
+        Future<Long> sum = pools[0].submit(new LocalSumTest(1, end, 10));
         log.info("The sum of the numbers from 1 to " + end + " is " + sum.get() + " (and it took " + (System.currentTimeMillis() - start) + " ms to calculate)");
         assertEquals(Long.valueOf(44879160), sum.get());
 
-        shutdownCluster(pool1, pool2);
+        shutdownCluster(pools[0], pools[1]);
         // of course, nothing was distributed; they weren't distributable jobs.
     }
 
     @Test
     public void testBasic_clustered_distSums_oneServer() throws Exception {
         String uniqueName = getUniqueName();
-        JGroupsDistributedForkJoinPool pool1 = new JGroupsDistributedForkJoinPool(cache(0, cacheName()), 5, null);
-        pools = new JGroupsDistributedForkJoinPool[]{pool1};
+        pools = createCluster(1, uniqueName, 5);
         runClusteredTest();
     }
 
     @Test
     public void testBasic_clustered_distSums_twoServers() throws Exception {
-        createClusteredCaches(1, cacheName(), cb);
-        pools = new JGroupsDistributedForkJoinPool[]{new JGroupsDistributedForkJoinPool(cache(0, cacheName()), 1, null), new JGroupsDistributedForkJoinPool(cache(1, cacheName()), 1, null)}; // make both single-threaded so they're more likely to share work.
+        String uniqueName = getUniqueName();
+        pools = createCluster(2, uniqueName, 1);
         runClusteredTest();
     }
 

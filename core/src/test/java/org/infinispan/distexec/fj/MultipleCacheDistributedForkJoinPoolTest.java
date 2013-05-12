@@ -2,7 +2,6 @@ package org.infinispan.distexec.fj;
 
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
-import org.infinispan.manager.EmbeddedCacheManager;
 import org.infinispan.test.MultipleCacheManagersTest;
 
 /**
@@ -16,11 +15,7 @@ public class MultipleCacheDistributedForkJoinPoolTest extends MultipleCacheManag
     @Override
     protected void createCacheManagers() throws Throwable {
         cb = createConfigurationBuilder();
-        createClusteredCaches(1, cacheName(), cb);
-        for (EmbeddedCacheManager cacheManager : cacheManagers) {
-            cacheManager.defineConfiguration(TaskCachingDistributedForkJoinPool.defaultTaskCacheConfigurationName,
-                    cb.build());
-        }
+
     }
 
     protected ConfigurationBuilder createConfigurationBuilder() {

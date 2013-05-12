@@ -202,7 +202,7 @@ public class DefaultDistributedForkJoinPoolTest extends AbstractCacheTest {
         }
     }
 
-    public static void printInterestingOutput(int end, PrintStream out, WorkStealingDistributedForkJoinPool... pools) {
+    protected static void printInterestingOutput(int end, PrintStream out, WorkStealingDistributedForkJoinPool... pools) {
         out.println("\n\n**********************************************************");
         out.println("** Note that metrics are aggregated from previous tests.** ");
         out.println("Executed " + DistributedSumTask.executionCount + " tasks to sum " + end + " numbers across "

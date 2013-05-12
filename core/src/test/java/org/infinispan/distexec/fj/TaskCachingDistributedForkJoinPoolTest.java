@@ -63,6 +63,11 @@ public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheDistrib
 
     @Test
     public void testBasic() throws Exception {
+        createClusteredCaches(1, cacheName(), cb);
+        for (EmbeddedCacheManager cacheManager : cacheManagers) {
+            cacheManager.defineConfiguration(TaskCachingDistributedForkJoinPool.defaultTaskCacheConfigurationName,
+                    cb.build());
+        }
 
         TaskCachingDistributedForkJoinPool forkJoinPool = null;
         try {
@@ -99,8 +104,7 @@ public class TaskCachingDistributedForkJoinPoolTest extends MultipleCacheDistrib
 
     @Test
     public void testBasic_clustered_distSums_oneServer() throws Exception {
-        TaskCachingDistributedForkJoinPool pool1 = new TaskCachingDistributedForkJoinPool(cache(0, cacheName()), 5);
-        pools = new TaskCachingDistributedForkJoinPool[]{pool1};
+        pools = createCluster(1, 1);
         runClusteredTest();
     }
 
